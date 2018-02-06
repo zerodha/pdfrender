@@ -1,40 +1,44 @@
 #!/bin/env python
 # -*- coding: utf-8 -*-
 """
-This RPC is used to fill a pdf with the response data
+This RPC is used to fill a pdf with the response data.
+
+Data is filled using pdf_text_overlay lib
 """
-import os
+
 import json
+import os
 import uuid
 
 import frappe
 
-from pdf_writer import pdfWriter
-from frappe.utils import get_site_base_path
+from frappe.utils import get_files_path
+
+from pdf_text_overlay import pdf_writer
 
 
 @frappe.whitelist()
-def get_filled_pdf(template_id):
+def get_filled_pdf():
     """
-    Receives template_id, data and returns a pdf file
+    Receive template_id, data and returns a pdf file.
+
     Post the data to be filled on the pdf form
     The value of the key(name) in configuration data must be
     present as the key in the post data
 
     Call fill_pdf_form() method to fill the pdf form template
 
-    :param template_id: the template_id of the pdf form
     """
     try:
         file_name = fill_pdf_form(
-            template_id, json.loads(frappe.local.form_dict.data)
+            json.loads(frappe.local.form_dict.data)
         )
     except KeyError as e:
         frappe.local.response['http_status_code'] = 400
         return {"error": "Key not found ", "key": e.message}
     except ValueError as e:
         frappe.local.response['http_status_code'] = 400
-        return {"error": e.message, "template_id": template_id}
+        return {"error": e.message}
     except IOError as e:
         frappe.local.response['http_status_code'] = 400
         return {"error": e.message}
@@ -54,21 +58,20 @@ def get_filled_pdf(template_id):
     return "Success"
 
 
-def fill_pdf_form(template_id, post_data):
+def fill_pdf_form(post_data):
     """
-    Receives template_id and post_data and returns a file_name
-    New pdf file is created to store the response of pdf_text_overlay library
+    Receive template_id and post_data and returns a file_name.
 
+    New pdf file is created to store the response of pdf_text_overlay library
     Call pdf_text_overlay library to fill the pdf form
 
-    :param template_id: the template_id of the pdf form
     :param post_data: post_data is the data which
                         is used to fill the pdf
      """
     # Get template, configuration and font from doctype using template id
     data = frappe.get_all(
         'Templates',
-        filters={"templateId": template_id},
+        filters={"templateId": post_data['template_id']},
         fields=['template', 'configuration', 'font']
     )
 
@@ -76,7 +79,8 @@ def fill_pdf_form(template_id, post_data):
         data, = data
     except ValueError:
         raise ValueError(
-            'Could not find data for template ID: {}'.format(template_id)
+            'Could not find data for template ID: {}'.format(
+                post_data['template_id'])
         )
 
     font_path = frappe.get_doc('Fonts', data['font'])
@@ -85,8 +89,8 @@ def fill_pdf_form(template_id, post_data):
 
     # Read font file and pdf template
     try:
-        font = file(get_site_base_path() + font_path.font_name, "rb")
-        pdf_template = file(get_site_base_path() + template_path, "rb")
+        font = file(get_file_path(font_path.font_name), "rb")
+        pdf_template = file(get_file_path(template_path), "rb")
     except IOError as io:
         raise IOError('File not found: {}'.format(io.filename))
 
@@ -94,7 +98,7 @@ def fill_pdf_form(template_id, post_data):
     file_name = str(uuid.uuid4()) + '.pdf'
 
     # Fill the Pdf using pdf_text_overlay library
-    pdf_file_object = pdfWriter(
+    pdf_file_object = pdf_writer(
         pdf_template, json.loads(configuration),
         post_data, font
     )
@@ -107,9 +111,28 @@ def fill_pdf_form(template_id, post_data):
     return file_name
 
 
+def get_file_path(file_path):
+    """File path."""
+    if "/" not in file_path:
+        file_path = "/files/" + file_path
+
+    if file_path.startswith("/private/files/"):
+        file_path = get_files_path(
+            *file_path.split("/private/files/", 1)[1].split("/"), is_private=1)
+
+    elif file_path.startswith("/files/"):
+        file_path = get_files_path(
+            *file_path.split("/files/", 1)[1].split("/"))
+
+    else:
+        frappe.throw(
+            "There is some problem with the file url: {0}").format(file_path)
+    return file_path
+
+
 def delete_file(file_name):
     """
-    Delete a file if exists
+    Delete a file if exists.
 
     :param file_name: the file_name is used to delete the file
     """
